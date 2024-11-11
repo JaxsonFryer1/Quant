@@ -1,0 +1,16 @@
+pandas
+numpy
+hmmlearn
+pandas_datareader
+yfinance
+backtrader
+backtesting
+TA-Lib
+seaborn
+matplotlib
+requests 
+beautifulsoup4 
+selenium 
+nltk
+textblob 
+schedule
