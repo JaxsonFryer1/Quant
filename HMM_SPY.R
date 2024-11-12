@@ -9,6 +9,19 @@ library(TTR)
 library(lubridate)
 library(forecast)
 
+get_projected_date <- function(start_date, trading_days) {
+  projected_date <- start_date
+  while (trading_days > 0) {
+    projected_date <- projected_date + 1
+    # Skip weekends (Saturday = 6, Sunday = 7)
+    if (weekdays(projected_date) %in% c("Saturday", "Sunday")) next
+    trading_days <- trading_days - 1
+  }
+  return(projected_date)
+}
+
+
+
 # Step 1: Fetch S&P 500 and Futures Data
 symbol <- "SPY"
 getSymbols(symbol, src = "yahoo", from = "2022-01-01", to = Sys.Date())
@@ -19,7 +32,10 @@ annual_dividend <- sum(dividends) * (252 / length(index(dividends)))
 dividend_yield <- annual_dividend / as.numeric(last(sp500_data))
 
 # Futures Pricing
-T_days <- 21
+T_days <- 1
+# Calculate projected close date
+start_date <- Sys.Date()
+projected_close_date <- get_projected_date(start_date, T_days)
 T <- T_days / 252
 getSymbols("DGS1MO", src = "FRED")
 r <- as.numeric(last(na.omit(DGS1MO))) / 100
@@ -123,8 +139,8 @@ prob_up <- mean(final_prices > S0)
 prob_down <- mean(final_prices < S0)
 expected_return_pct <- (expected_price / S0 - 1) * 100
 
-cat("Expected Price in 1 Month: $", round(expected_price, 2), "\n")
-cat("Median Price in 1 Month: $", round(median_price, 2), "\n")
+cat("Expected Price in ", T_days, " Trading Days (", format(projected_close_date, "%Y-%m-%d"), ") close: $", round(expected_price, 2), "\n")
+
 cat("Expected Return: ", round(expected_return_pct, 2), "%\n")
 cat("Probability of Price Increase: ", round(prob_up * 100, 2), "%\n")
 cat("Probability of Price Decrease: ", round(prob_down * 100, 2), "%\n")
