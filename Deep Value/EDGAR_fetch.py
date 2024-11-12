@@ -10,8 +10,12 @@ def fetch_and_save_data(tickers, folder_path="financial_data"):
         tickers (list): List of stock tickers.
         folder_path (str): Path to store the financial data.
     """
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
+    # Get the absolute path of the script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    absolute_folder_path = os.path.join(script_dir, folder_path)
+
+    if not os.path.exists(absolute_folder_path):
+        os.makedirs(absolute_folder_path)
 
     for ticker in tickers:
         stock = yf.Ticker(ticker)
@@ -19,18 +23,18 @@ def fetch_and_save_data(tickers, folder_path="financial_data"):
 
         # Fetch historical stock data
         history = stock.history(period='10y')
-        history.to_csv(os.path.join(folder_path, f"{ticker}_history.csv"))
+        history.to_csv(os.path.join(absolute_folder_path, f"{ticker}_history.csv"))
 
         # Fetch financial statements
         try:
             stock_balance_sheet = stock.balance_sheet
-            stock_balance_sheet.to_csv(os.path.join(folder_path, f"{ticker}_balance_sheet.csv"))
+            stock_balance_sheet.to_csv(os.path.join(absolute_folder_path, f"{ticker}_balance_sheet.csv"))
 
             stock_financials = stock.financials
-            stock_financials.to_csv(os.path.join(folder_path, f"{ticker}_income_statement.csv"))
+            stock_financials.to_csv(os.path.join(absolute_folder_path, f"{ticker}_income_statement.csv"))
 
             stock_cashflow = stock.cashflow
-            stock_cashflow.to_csv(os.path.join(folder_path, f"{ticker}_cashflow.csv"))
+            stock_cashflow.to_csv(os.path.join(absolute_folder_path, f"{ticker}_cashflow.csv"))
         except Exception as e:
             print(f"Failed to fetch financial data for {ticker}: {e}")
 
