@@ -9,31 +9,29 @@ library(TTR)
 library(lubridate)
 library(forecast)
 
+# Helper Function for Trading Days Calculation
 get_projected_date <- function(start_date, trading_days) {
   projected_date <- start_date
   while (trading_days > 0) {
     projected_date <- projected_date + 1
-    # Skip weekends (Saturday = 6, Sunday = 7)
     if (weekdays(projected_date) %in% c("Saturday", "Sunday")) next
     trading_days <- trading_days - 1
   }
   return(projected_date)
 }
 
-
-
 # Step 1: Fetch S&P 500 and Futures Data
 symbol <- "SPY"
 getSymbols(symbol, src = "yahoo", from = "2022-01-01", to = Sys.Date())
 sp500_data <- na.omit(Cl(get(symbol)))
+
 # Calculate dividend yield of SPY
 dividends <- getDividends(symbol, from = "2022-01-01", to = Sys.Date())
 annual_dividend <- sum(dividends) * (252 / length(index(dividends)))
 dividend_yield <- annual_dividend / as.numeric(last(sp500_data))
 
 # Futures Pricing
-T_days <- 1
-# Calculate projected close date
+T_days <- 21
 start_date <- Sys.Date()
 projected_close_date <- get_projected_date(start_date, T_days)
 T <- T_days / 252
@@ -66,7 +64,12 @@ data_combined <- na.omit(data_combined)
 data_df <- data.frame(date = index(data_combined), coredata(data_combined))
 data_df_clean <- na.omit(data_df)
 xreg_matrix <- as.matrix(data_df_clean[, c("FedFundsRate", "InflationRate", "Employment")])
-arimax_model <- auto.arima(data_df_clean$SP500_Returns, xreg = xreg_matrix, seasonal = FALSE)
+
+arimax_model <- auto.arima(
+  data_df_clean$SP500_Returns,
+  xreg = xreg_matrix,
+  seasonal = FALSE
+)
 forecast_result <- forecast(arimax_model, xreg = tail(xreg_matrix, 1), h = 1)
 expected_return <- as.numeric(forecast_result$mean)
 
@@ -75,19 +78,19 @@ expected_return_annualized <- expected_return * 12
 adjusted_drift <- max(r, expected_return_annualized)
 
 # Step 6: Estimate Volatility
-spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
-                   mean.model = list(armaOrder = c(0, 0), include.mean = TRUE),
-                   distribution.model = "std")
+spec <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(0, 0), include.mean = TRUE),
+  distribution.model = "std"
+)
 garch_fit <- ugarchfit(spec = spec, data = sp500_returns)
 
-# Check for convergence and extract volatility
 if (garch_fit@fit$convergence == 0) {
   volatility <- as.numeric(sigma(garch_fit))[length(sp500_returns)]
 } else {
   stop("GARCH model did not converge.")
 }
 
-# Ensure adjusted_drift is numeric and not NA
 if (!is.na(adjusted_drift) && length(adjusted_drift) == 1) {
   adjusted_drift <- as.numeric(adjusted_drift)
 } else {
@@ -113,6 +116,7 @@ price_paths <- simulate_paths(S0, adjusted_drift, T, T_days, n_scenarios, volati
 # Step 8: Plot Probability Cone
 percentiles <- c(0.05, 0.25, 0.5, 0.75, 0.95)
 quantiles_matrix <- apply(price_paths, 1, quantile, probs = percentiles)
+
 plot_data <- data.frame(
   Days = 0:T_days,
   Quantile_5pct = quantiles_matrix[1, ],
@@ -140,7 +144,6 @@ prob_down <- mean(final_prices < S0)
 expected_return_pct <- (expected_price / S0 - 1) * 100
 
 cat("Expected Price in ", T_days, " Trading Days (", format(projected_close_date, "%Y-%m-%d"), ") close: $", round(expected_price, 2), "\n")
-
 cat("Expected Return: ", round(expected_return_pct, 2), "%\n")
 cat("Probability of Price Increase: ", round(prob_up * 100, 2), "%\n")
 cat("Probability of Price Decrease: ", round(prob_down * 100, 2), "%\n")

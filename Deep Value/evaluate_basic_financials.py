@@ -1,6 +1,7 @@
 import pandas as pd
 import yfinance as yf
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def compute_basic_ratios(ticker):
     """
@@ -31,7 +32,7 @@ def compute_basic_ratios(ticker):
         latest_cashflow = cashflow.iloc[:, 0]
 
         # Calculate basic ratios
-        net_income = latest_financials.get('Net Income')
+        net_income = latest_financials.get('Net Income From Continuing Operations')
         revenue = latest_financials.get('Total Revenue')
         total_assets = latest_balance_sheet.get('Total Assets')
         total_liabilities = latest_balance_sheet.get('Total Liab')
@@ -67,14 +68,14 @@ def compute_basic_ratios(ticker):
             ratios['Earnings Per Share (EPS)'] = None
             ratios['Price-to-Earnings (P/E) Ratio'] = None
 
-        return ratios
+        return {'Ticker': ticker, **ratios}
     except Exception as e:
         print(f"Error computing ratios for {ticker}: {e}")
         return None
 
-def screen_stocks_basic_ratios(tickers, criteria):
+def screen_stocks_parallel(tickers, criteria):
     """
-    Screen stocks based on basic financial ratios.
+    Screen stocks based on basic financial ratios using parallel processing.
 
     Args:
         tickers (list): List of stock tickers to screen.
@@ -85,36 +86,34 @@ def screen_stocks_basic_ratios(tickers, criteria):
     """
     results = []
 
-    for ticker in tickers:
-        print(f"Analyzing {ticker}...")
+    def analyze_ticker(ticker):
         ratios = compute_basic_ratios(ticker)
         if ratios is None:
-            continue
+            return None
+            
 
         # Check if ratios meet the criteria
-        meets_criteria = True
         for key, (min_val, max_val) in criteria.items():
             value = ratios.get(key)
-            if value is None:
-                meets_criteria = False
-                break
-            if min_val is not None and value < min_val:
-                meets_criteria = False
-                break
-            if max_val is not None and value > max_val:
-                meets_criteria = False
-                break
-        if meets_criteria:
-            result = {'Ticker': ticker}
-            result.update(ratios)
-            results.append(result)
+            if value is None or (min_val is not None and value < min_val) or (max_val is not None and value > max_val):
+                return None
+        return ratios
+
+    # Use ThreadPoolExecutor for parallel execution
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        future_to_ticker = {executor.submit(analyze_ticker, ticker): ticker for ticker in tickers}
+
+        for future in as_completed(future_to_ticker):
+            result = future.result()
+            if result:
+                results.append(result)
 
     results_df = pd.DataFrame(results)
     return results_df
 
 if __name__ == "__main__":
     # Read tickers from the output of Code 1
-    tickers_file = "tickers_to_research.csv"
+    tickers_file = "NYSE_tickers.csv"
     if os.path.exists(tickers_file):
         tickers_df = pd.read_csv(tickers_file)
         tickers = tickers_df['Ticker'].tolist()
@@ -131,12 +130,12 @@ if __name__ == "__main__":
             'Return on Assets (ROA)': (0.05, None),  # At least 5%
             'Return on Equity (ROE)': (0.10, None),  # At least 10%
             'Current Ratio': (1.0, None),            # At least 1.0
-            'Debt-to-Equity Ratio': (None, 2.0),     # No more than 2.0
+            'Debt-to-Equity Ratio': (None, 3.0),     # No more than 3.0
             'Price-to-Earnings (P/E) Ratio': (None, 20)  # No more than 20
         }
 
-        # Screen stocks based on basic ratios
-        results_df = screen_stocks_basic_ratios(tickers, criteria)
+        # Screen stocks based on basic ratios in parallel
+        results_df = screen_stocks_parallel(tickers, criteria)
 
         # Save results to a CSV file
         output_file = "tickers_for_deeper_analysis.csv"
