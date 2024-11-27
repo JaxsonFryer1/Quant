@@ -5,7 +5,7 @@ from datetime import timedelta
 import matplotlib.pyplot as plt
 
 # Define the date range
-start_date = '2023-11-01'
+start_date = '2020-11-01'
 end_date = '2024-11-27'
 
 # Download data for U.S. S&P 500 and Australian ETF

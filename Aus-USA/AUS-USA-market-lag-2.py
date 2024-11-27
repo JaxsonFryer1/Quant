@@ -9,8 +9,8 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Define the date range
-start_date = '2015-01-01'
-end_date = '2023-10-01'
+start_date = '2014-01-01'
+end_date = '2024-11-21'
 
 # Helper functions
 def compute_RSI(series, period=14):
@@ -72,29 +72,30 @@ data.dropna(inplace=True)
 data.columns = ['_'.join(col) if isinstance(col, tuple) else col for col in data.columns]
 
 # Confirm the exact names for SPX_Close and EWA_Close
-spx_close_col = 'SPX_Close_SPX_^GSPC'
-ewa_close_col = 'EWA_Close_EWA_EWA'
+spx_close_col = 'SPX_Close'
+ewa_close_col = 'EWA_Close'
+
+# Adjust column names for easier access
+data.rename(columns={
+    'SPX_Close_SPX_^GSPC': 'SPX_Close',
+    'SPX_High_SPX_^GSPC': 'SPX_High',
+    'SPX_Low_SPX_^GSPC': 'SPX_Low',
+    'EWA_Close_EWA_EWA': 'EWA_Close',
+    'EWA_Open_EWA_EWA': 'EWA_Open',
+    'EWA_High_EWA_EWA': 'EWA_High',
+    'EWA_Low_EWA_EWA': 'EWA_Low'
+}, inplace=True)
 
 # Ensure these columns exist in the DataFrame
 if spx_close_col not in data.columns or ewa_close_col not in data.columns:
     raise KeyError("SPX_Close or EWA_Close columns are missing in the dataset.")
 
-# SPX columns
-spx_high_col = 'SPX_High_SPX_^GSPC'
-spx_low_col = 'SPX_Low_SPX_^GSPC'
-
-# EWA columns
-ewa_high_col = 'EWA_High_EWA_EWA'
-ewa_low_col = 'EWA_Low_EWA_EWA'
-
 # Calculate SPX returns
 data['SPX_Return'] = data[spx_close_col].pct_change()
 
-# Calculate ATR for SPX
-data['SPX_ATR'] = compute_ATR(data, spx_high_col, spx_low_col, spx_close_col)
-
-# Calculate ATR for EWA
-data['EWA_ATR'] = compute_ATR(data, ewa_high_col, ewa_low_col, ewa_close_col)
+# Calculate ATR for SPX and EWA
+data['SPX_ATR'] = compute_ATR(data.copy(), 'SPX_High', 'SPX_Low', 'SPX_Close')
+data['EWA_ATR'] = compute_ATR(data.copy(), 'EWA_High', 'EWA_Low', 'EWA_Close')
 
 # Feature engineering
 data['VIX_Return'] = data['VIX_Close_VIX_^VIX'].pct_change()
@@ -146,7 +147,6 @@ print(f"Using split_date: {split_date}")
 print(f"Rows before split_date: {len(data[data.index < split_date])}")
 print(f"Rows after split_date: {len(data[data.index >= split_date])}")
 
-
 # Train-test split
 X_train = X[data.index < split_date]
 X_test = X[data.index >= split_date]
@@ -162,46 +162,119 @@ model = RandomForestClassifier(n_estimators=100, random_state=42)
 model.fit(X_train, y_train)
 data['Predicted_Signal'] = model.predict(X)
 
+# Feature importance
+feature_importances = pd.Series(model.feature_importances_, index=features)
+print("Feature Importances:")
+print(feature_importances.sort_values(ascending=False))
 
-
-# Backtesting
-initial_capital = 100000
+# Backtesting with risk management
+initial_capital = 30000
 data['Position'] = 0
 data['Cash'] = initial_capital
 data['Total'] = initial_capital
 data['Holdings'] = 0
+data['Entry_Price'] = np.nan
+
+# Risk management parameters
+stop_loss_pct = 0.05  # 5% stop loss
+take_profit_pct = 1.0  # 100% take profit
+max_position_size =  initial_capital  # Maximum position size is initial capital
 
 for i in range(1, len(data)):
     prev_index = data.index[i - 1]
     index = data.index[i]
+    
     if data.loc[prev_index, 'Predicted_Signal'] == 1 and data.loc[prev_index, 'Position'] == 0:
-        shares = initial_capital // data.loc[index, 'EWA_Open_EWA_EWA']
+        # Buy signal and currently not in position
+        # Implement position sizing based on ATR
+        atr = data.loc[index, 'EWA_ATR']
+        if pd.isna(atr) or atr == 0:
+            atr = data['EWA_ATR'].mean()  # Use average ATR if current ATR is not available
+        risk_per_share = atr
+        risk_per_trade = 0.05 * data.loc[prev_index, 'Total']  # Risk 10% of current equity
+        shares = risk_per_trade // risk_per_share
+        # Limit position size
+        max_shares = max_position_size // data.loc[index, 'EWA_Open']
+        shares = min(shares, max_shares)
+        # Ensure shares is at least 1
+        shares = max(shares, 1)
         data.loc[index, 'Position'] = shares
-        data.loc[index, 'Cash'] = data.loc[prev_index, 'Cash'] - (shares * data.loc[index, 'EWA_Open_EWA_EWA'])
-    elif data.loc[prev_index, 'Predicted_Signal'] == 0 and data.loc[prev_index, 'Position'] > 0:
+        data.loc[index, 'Cash'] = data.loc[prev_index, 'Cash'] - (shares * data.loc[index, 'EWA_Open'])
+        data.loc[index, 'Entry_Price'] = data.loc[index, 'EWA_Open']
+        
+    elif data.loc[prev_index, 'Position'] > 0:
+        # Currently in position
+        # Check for stop-loss or take-profit
+        entry_price = data.loc[prev_index, 'Entry_Price']
+        current_low = data.loc[index, 'EWA_Low']
+        current_high = data.loc[index, 'EWA_High']
         shares = data.loc[prev_index, 'Position']
-        data.loc[index, 'Cash'] = data.loc[prev_index, 'Cash'] + (shares * data.loc[index, 'EWA_Open_EWA_EWA'])
-        data.loc[index, 'Position'] = 0
+        # Check stop-loss
+        if (current_low - entry_price) / entry_price <= -stop_loss_pct:
+            # Exit at stop-loss price
+            exit_price = entry_price * (1 - stop_loss_pct)
+            data.loc[index, 'Cash'] = data.loc[prev_index, 'Cash'] + (shares * exit_price)
+            data.loc[index, 'Position'] = 0
+            data.loc[index, 'Entry_Price'] = np.nan
+        # Check take-profit
+        elif (current_high - entry_price) / entry_price >= take_profit_pct:
+            # Exit at take-profit price
+            exit_price = entry_price * (1 + take_profit_pct)
+            data.loc[index, 'Cash'] = data.loc[prev_index, 'Cash'] + (shares * exit_price)
+            data.loc[index, 'Position'] = 0
+            data.loc[index, 'Entry_Price'] = np.nan
+        # Check sell signal
+        elif data.loc[prev_index, 'Predicted_Signal'] == 0:
+            # Exit at current open price
+            data.loc[index, 'Cash'] = data.loc[prev_index, 'Cash'] + (shares * data.loc[index, 'EWA_Open'])
+            data.loc[index, 'Position'] = 0
+            data.loc[index, 'Entry_Price'] = np.nan
+        else:
+            # Hold position
+            data.loc[index, 'Position'] = shares
+            data.loc[index, 'Cash'] = data.loc[prev_index, 'Cash']
+            data.loc[index, 'Entry_Price'] = entry_price
     else:
-        data.loc[index, 'Position'] = data.loc[prev_index, 'Position']
+        # Not in position and no buy signal
+        data.loc[index, 'Position'] = 0
         data.loc[index, 'Cash'] = data.loc[prev_index, 'Cash']
+        data.loc[index, 'Entry_Price'] = np.nan
 
-    data.loc[index, 'Holdings'] = data.loc[index, 'Position'] * data.loc[index, ewa_close_col]
+    data.loc[index, 'Holdings'] = data.loc[index, 'Position'] * data.loc[index, 'EWA_Close']
     data.loc[index, 'Total'] = data.loc[index, 'Cash'] + data.loc[index, 'Holdings']
 
-data['Cumulative_Returns'] = (1 + data['Total'].pct_change()).cumprod()
-annualized_return = data['Total'].pct_change().mean() * 252
-annualized_volatility = data['Total'].pct_change().std() * np.sqrt(252)
-sharpe_ratio = annualized_return / annualized_volatility
+# Calculate cumulative returns and performance metrics
+data['Cumulative_Returns'] = (data['Total'] / initial_capital)
+returns = data['Total'].pct_change()
+annualized_return = returns.mean() * 252
+num_years = (data.index[-1] - data.index[0]).days / 365.25
 
-# Visualization
+annualized_volatility = returns.std() * np.sqrt(252)
+r_f = 0.02 #2% risk free
+sharpe_ratio = (annualized_return - r_f) / annualized_volatility
+
+# Calculate drawdown
+def calculate_drawdown(equity_curve):
+    roll_max = equity_curve.cummax()
+    drawdown = (equity_curve - roll_max) / roll_max
+    max_drawdown = drawdown.min()
+    return drawdown, max_drawdown
+
+data['Drawdown'], max_drawdown = calculate_drawdown(data['Total'])
+print(f"Maximum Drawdown: {max_drawdown * 100:.2f}%")
+print(f"Sharpe Ratio: {sharpe_ratio:.2f}")
+print(f"Annualized return: {annualized_return}")
+
+
+# Visualization of Portfolio Value and Drawdown
 plt.figure(figsize=(14, 7))
 plt.plot(data['Total'], label='Strategy Portfolio Value')
-plt.plot(data[ewa_close_col] / data[ewa_close_col].iloc[0] * initial_capital, label='EWA Buy and Hold')
+plt.plot(data['EWA_Close'] / data['EWA_Close'].iloc[0] * initial_capital, label='EWA Buy and Hold')
+plt.plot(data['SPX_Close'] / data['SPX_Close'].iloc[0] * initial_capital, label='SPX Buy and Hold')
 plt.title('Portfolio Value vs. Buy-and-Hold')
 plt.xlabel('Date')
 plt.ylabel('Portfolio Value')
 plt.legend()
 plt.show()
 
-print(f"Sharpe Ratio: {sharpe_ratio:.2f}")
+
