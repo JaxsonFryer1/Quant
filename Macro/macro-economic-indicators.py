@@ -1,135 +1,77 @@
 import requests
-import os
+import numpy as np
+import pandas as pd
+from datetime import datetime
 
-# Set up your API keys here
-ALPHA_VANTAGE_API_KEY = '2JSP6T0HLHWV830U'
+# API keys
 FRED_API_KEY = '1c4daf05ce00f1dd2456c524c02a3e5d'
 
-
-
-# Fetch Consumer Confidence Index from FRED
-def get_consumer_confidence_index():
-    url = f'https://api.stlouisfed.org/fred/series/observations?series_id=CSCICP03USM665S&api_key={FRED_API_KEY}&file_type=json'
+# Fetch historical data from FRED
+def fetch_fred_data(series_id, start_date="2000-01-01"):
+    url = f'https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json'
     response = requests.get(url)
     data = response.json()
-    
     try:
-        cci = float(data['observations'][-1]['value'])
-        return cci
+        observations = data['observations']
+        df = pd.DataFrame(observations)
+        df['date'] = pd.to_datetime(df['date'])
+        df['value'] = pd.to_numeric(df['value'], errors='coerce')
+        df = df[df['date'] >= start_date]  # Filter by start date
+        return df.set_index('date')['value']
     except KeyError:
-        print("Error fetching Consumer Confidence Index data.")
-        return 100  # Default neutral value
+        print(f"Error fetching data for {series_id}")
+        return pd.Series(dtype=float)
 
-# Fetch Unemployment Rate from FRED
-def get_unemployment_rate():
-    url = f'https://api.stlouisfed.org/fred/series/observations?series_id=UNRATE&api_key={FRED_API_KEY}&file_type=json'
-    response = requests.get(url)
-    data = response.json()
-    
-    try:
-        unemployment_rate = float(data['observations'][-1]['value'])
-        return unemployment_rate
-    except KeyError:
-        print("Error fetching Unemployment Rate data.")
-        return 4  # Default neutral value
-
-# Fetch Inflation Rate (CPI) from FRED
-def get_inflation_rate():
-    url = f'https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&api_key={FRED_API_KEY}&file_type=json'
-    response = requests.get(url)
-    data = response.json()
-    
-    try:
-        # Convert current and previous month CPI values to float
-        cpi = float(data['observations'][-1]['value'])
-        previous_cpi = float(data['observations'][-13]['value'])  # Previous year’s CPI
-        inflation_rate = (cpi - previous_cpi) / previous_cpi * 100
-        return inflation_rate
-    except (KeyError, IndexError, ValueError) as e:
-        print("Error fetching Inflation Rate data:", e)
-        return 2  # Default neutral value
-
-
-# Fetch Interest Rate from FRED
-def get_interest_rate():
-    url = f'https://api.stlouisfed.org/fred/series/observations?series_id=FEDFUNDS&api_key={FRED_API_KEY}&file_type=json'
-    response = requests.get(url)
-    data = response.json()
-    
-    try:
-        interest_rate = float(data['observations'][-1]['value'])
-        return interest_rate
-    except KeyError:
-        print("Error fetching Interest Rate data.")
-        return 2  # Default neutral value
-
-# Fetch GDP Growth from FRED
-def get_gdp_growth():
-    url = f'https://api.stlouisfed.org/fred/series/observations?series_id=GDP&api_key={FRED_API_KEY}&file_type=json'
-    response = requests.get(url)
-    data = response.json()
-    
-    try:
-        gdp_current = float(data['observations'][-1]['value'])
-        gdp_previous = float(data['observations'][-2]['value'])
-        gdp_growth = (gdp_current - gdp_previous) / gdp_previous * 100
-        return gdp_growth
-    except KeyError:
-        print("Error fetching GDP Growth data.")
-        return 2  # Default neutral value
-
-# Additional functions for other indicators can follow similar structures
-
-# Function to calculate macroeconomic sentiment
-def calculate_macro_sentiment():
+# Fetch all required indicators
+def get_all_indicators():
     indicators = {
-        "Consumer Confidence Index": get_consumer_confidence_index(),
-        "Unemployment Rate": get_unemployment_rate(),
-        "Inflation Rate": get_inflation_rate(),
-        "Interest Rate": get_interest_rate(),
-        "GDP Growth": get_gdp_growth(),
-        # Add other indicator functions here
+        "Consumer Confidence Index": fetch_fred_data("CSCICP03USM665S"),
+        "Unemployment Rate": fetch_fred_data("UNRATE"),
+        "Inflation Rate": fetch_fred_data("CPIAUCSL"),
+        "Interest Rate": fetch_fred_data("FEDFUNDS"),
+        "GDP Growth": fetch_fred_data("A191RL1Q225SBEA"),
     }
-    
+    return indicators
 
+# Calculate z-scores
+def calculate_z_scores(series):
+    return (series - series.mean()) / series.std()
 
-#     "
-#     Indicator	Baseline (Neutral Value)	Normalization Formula
-# Consumer Confidence Index	100	(value - 100) / 100
-# Unemployment Rate	4%	(4 - value) / 4
-# Inflation Rate (CPI)	2%	(2 - value) / 2
-# Interest Rate	2%	(2 - value) / 2
-# GDP Growth Rate	3%	value / 3
-#     "
-    # Normalize scores based on reasonable benchmarks
+# Calculate weighted sentiment
+def calculate_weighted_sentiment(normalized_scores, weights):
+    weighted_scores = {k: normalized_scores[k] * weights[k] for k in normalized_scores}
+    return sum(weighted_scores.values()) / sum(weights.values())
+
+# Main analysis function
+def calculate_macro_sentiment():
+    indicators = get_all_indicators()
+    weights = {
+        "Consumer Confidence Index": 0.25,
+        "Unemployment Rate": 0.15,
+        "Inflation Rate": 0.2,
+        "Interest Rate": 0.25,
+        "GDP Growth": 0.15,
+    }
     normalized_scores = {}
-    for key, value in indicators.items():
-        if key == "Consumer Confidence Index":
-            normalized_scores[key] = (value - 100) / 100
-        elif key == "Unemployment Rate":
-            normalized_scores[key] = (4 - value) / 4
-        elif key == "Inflation Rate":
-            normalized_scores[key] = (2 - value) / 2
-        elif key == "Interest Rate":
-            normalized_scores[key] = (2 - value) / 2
-        elif key == "GDP Growth":
-            normalized_scores[key] = value / 3
 
-    # Aggregate scores and interpret
-    overall_sentiment = sum(normalized_scores.values()) / len(normalized_scores)
-    print("Individual Indicator Scores:")
+    for key, series in indicators.items():
+        z_scores = calculate_z_scores(series)
+        normalized_scores[key] = z_scores[-1]  # Use the latest z-score for sentiment
+    
+    sentiment_score = calculate_weighted_sentiment(normalized_scores, weights)
+
+    print("Individual Indicator Z-Scores:")
     for key, score in normalized_scores.items():
         print(f"{key}: {score:.2f}")
 
-    print(f"\nOverall Macroeconomic Sentiment Score: {overall_sentiment:.2f}")
-
-    if overall_sentiment > 0.2:
+    print(f"\nOverall Macroeconomic Sentiment Score: {sentiment_score:.2f}")
+    if sentiment_score > 0.5:
         interpretation = "Positive Economic Outlook"
-    elif overall_sentiment < -0.2:
+    elif sentiment_score < -0.5:
         interpretation = "Negative Economic Outlook"
     else:
         interpretation = "Neutral Economic Outlook"
-
+    
     print(f"Interpretation: {interpretation}")
 
 # Run the macroeconomic sentiment analysis

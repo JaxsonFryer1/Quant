@@ -5,6 +5,24 @@ from datetime import timedelta
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 import warnings
+from alpaca_trade_api.rest import REST, TimeFrame
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # Load variables from .env file
+API_KEY = os.getenv("ALPACA_API_KEY")
+SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+
+# Initialize the REST API
+api = REST(API_KEY, SECRET_KEY, base_url='https://paper-api.alpaca.markets')
+
+
+
+# Check account details
+account = api.get_account()
+print(f"Account Status: {account.status}")
+print(f"Equity: {account.equity}")
+print(f"Buying Power: {account.buying_power}")
 
 warnings.filterwarnings('ignore')
 
